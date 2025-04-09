@@ -21,6 +21,7 @@ use rustc_errors::Applicability;
 use rustc_hir::{
     BorrowKind, Expr, ExprKind, Mutability,
     def_id::{DefId, LOCAL_CRATE},
+    intravisit,
 };
 use rustc_index::bit_set::DenseBitSet;
 use rustc_infer::infer::TyCtxtInferExt;
@@ -40,6 +41,7 @@ use std::{
     io::Write,
     path::PathBuf,
 };
+use rustc_hir::intravisit::{self, Visitor};
 
 mod check_inherents;
 use check_inherents::check_inherents;
@@ -181,6 +183,31 @@ impl<'tcx> LateLintPass<'tcx> for UnnecessaryConversionForTrait {
             && let Some(input) = outer_fn_sig.inputs().get(i)
             && let Param(param_ty) = input.kind()
         {
+            // Check if the original collection is used later
+            let hir_id = maybe_arg.hir_id;
+            let mut is_used_later = false;
+            let body_id = cx.tcx.hir().enclosing_body_owner(hir_id);
+            let body = cx.tcx.hir().body(body_id);
+            
+            for stmt in body.value.stmts.iter() {
+                if stmt.span > maybe_call.span {
+                    let mut visitor = UsageVisitor {
+                        hir_id,
+                        found: false,
+                    };
+                    visitor.visit_stmt(stmt);
+                    if visitor.found {
+                        is_used_later = true;
+                        break;
+                    }
+                }
+            }
+
+            if is_used_later {
+                // Skip the lint if the collection is used later
+                return;
+            }
+
             let mut strip_unnecessary_conversions = |mut expr, mut mutabilities| {
                 let mut refs_prefix = None;
 
@@ -400,6 +427,14 @@ mod test {
         let _var = VarGuard::set("CHECK_INHERENTS", "1");
 
         dylint_testing::ui_test_example(env!("CARGO_PKG_NAME"), "vec");
+    }
+
+    #[test]
+    fn false_positive_iter() {
+        let _var = VarGuard::set("COVERAGE", "1");
+        let _var = VarGuard::set("CHECK_INHERENTS", "1");
+
+        dylint_testing::ui_test_example(env!("CARGO_PKG_NAME"), "false_positive_iter");
     }
 
     /// Restores an env var on drop
@@ -691,4 +726,25 @@ fn coverage_path(krate: &str) -> PathBuf {
         .target_directory
         .join(krate.to_owned() + "_coverage.txt")
         .into_std_path_buf()
+}
+
+struct UsageVisitor {
+    hir_id: HirId,
+    found: bool,
+}
+
+impl<'tcx> Visitor<'tcx> for UsageVisitor {
+    type NestedFilter = nested_filter::OnlyBodies;
+
+    fn nested_visit_map(&mut self) -> Self::NestedFilter {
+        nested_filter::OnlyBodies
+    }
+
+    fn visit_expr(&mut self, expr: &'tcx Expr<'tcx>) {
+        if expr.hir_id == self.hir_id {
+            self.found = true;
+            return;
+        }
+        intravisit::walk_expr(self, expr);
+    }
 }
