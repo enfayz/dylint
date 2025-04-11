@@ -45,7 +45,10 @@ use std::{
 use rustc_middle::hir::nested_filter;
 
 mod check_inherents;
+mod usage_check;
+
 use check_inherents::check_inherents;
+use usage_check::is_used_later;
 
 dylint_linting::impl_late_lint! {
     /// ### What it does

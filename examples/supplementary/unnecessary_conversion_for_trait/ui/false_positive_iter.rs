@@ -1,10 +1,18 @@
 // Let's add a comment to ensure the file exists and is accessible
 // This file contains a test for false positive scenarios with iterators
 
-#[allow(unnecessary_conversion_for_trait)]
+#![warn(unnecessary_conversion_for_trait)]
+
 fn main() {
-    let xs = vec![[0u8; 16]];
-    let mut ys: Vec<[u8; 16]> = Vec::new();
-    ys.extend(xs.iter());  // lint incorrectly suggests removing .iter()
-    println!("{:?}", xs);  // xs is used here, so .iter() is necessary
+    let mut ys = vec![];
+    let xs = vec![1, 2, 3];
+    
+    // The .iter() call is necessary here because:
+    // 1. The collection (xs) is used later in the code
+    // 2. We want to iterate over references to the elements without consuming xs
+    // 3. Removing .iter() would move xs into extend, making it unavailable for later use
+    ys.extend(xs.iter());     // lint suggests removing .iter()
+    
+    // This is where xs is used later
+    println!("xs: {:?}", xs);
 } 
