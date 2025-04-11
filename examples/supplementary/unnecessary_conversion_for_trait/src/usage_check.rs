@@ -16,14 +16,18 @@ impl<'tcx> Visitor<'tcx> for UsageVisitor {
     }
 
     fn visit_expr(&mut self, expr: &'tcx Expr<'tcx>) {
+        // Early return if we've already found what we're looking for
         if self.found {
             return;
         }
+        
+        // Check if this is the HirId we're looking for
         if expr.hir_id == self.hir_id {
             self.found = true;
             return;
         }
-        // Rely on the default walk, which covers all expression kinds uniformly
+        
+        // Let intravisit handle the recursion uniformly for all expression types
         intravisit::walk_expr(self, expr);
     }
 }
@@ -53,19 +57,15 @@ pub(crate) fn is_used_later<'tcx>(
     
     // Check all statements in the body
     for stmt in body.value.stmts.iter() {
-        if stmt.span > call_span {
-            if usage_found_in(hir_id, stmt, |v, s| v.visit_stmt(s)) {
-                return true;
-            }
+        if stmt.span > call_span && usage_found_in(hir_id, stmt, |v, s| v.visit_stmt(s)) {
+            return true;
         }
     }
     
     // Also check the body's return expression if it exists
     if let Some(expr) = body.value.expr {
-        if expr.span > call_span {
-            if usage_found_in(hir_id, expr, |v, e| v.visit_expr(e)) {
-                return true;
-            }
+        if expr.span > call_span && usage_found_in(hir_id, expr, |v, e| v.visit_expr(e)) {
+            return true;
         }
     }
     
