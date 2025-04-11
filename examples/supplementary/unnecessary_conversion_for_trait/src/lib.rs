@@ -21,7 +21,8 @@ use rustc_errors::Applicability;
 use rustc_hir::{
     BorrowKind, Expr, ExprKind, Mutability,
     def_id::{DefId, LOCAL_CRATE},
-    intravisit,
+    intravisit::{self, Visitor},
+    HirId,
 };
 use rustc_index::bit_set::DenseBitSet;
 use rustc_infer::infer::TyCtxtInferExt;
@@ -41,7 +42,7 @@ use std::{
     io::Write,
     path::PathBuf,
 };
-use rustc_hir::intravisit::{self, Visitor};
+use rustc_middle::hir::nested_filter;
 
 mod check_inherents;
 use check_inherents::check_inherents;
@@ -187,7 +188,7 @@ impl<'tcx> LateLintPass<'tcx> for UnnecessaryConversionForTrait {
             let hir_id = maybe_arg.hir_id;
             let mut is_used_later = false;
             let body_id = cx.tcx.hir().enclosing_body_owner(hir_id);
-            let body = cx.tcx.hir().body(body_id);
+            let body = cx.tcx.hir().body(body_id).unwrap();
             
             for stmt in body.value.stmts.iter() {
                 if stmt.span > maybe_call.span {
@@ -736,8 +737,8 @@ struct UsageVisitor {
 impl<'tcx> Visitor<'tcx> for UsageVisitor {
     type NestedFilter = nested_filter::OnlyBodies;
 
-    fn nested_visit_map(&mut self) -> Self::NestedFilter {
-        nested_filter::OnlyBodies
+    fn nested_visit_map<'this>(&'this mut self) -> Self::NestedFilter {
+        nested_filter::OnlyBodies(())
     }
 
     fn visit_expr(&mut self, expr: &'tcx Expr<'tcx>) {
