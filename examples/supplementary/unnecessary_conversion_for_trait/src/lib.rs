@@ -162,6 +162,97 @@ const IGNORED_INHERENTS: &[&[&str]] = &[
     &["std", "path", "PathBuf", "leak"],
 ];
 
+/// Visitor to check if a HirId is used in code
+struct UsageVisitor {
+    hir_id: HirId,
+    found: bool,
+}
+
+impl<'tcx> Visitor<'tcx> for UsageVisitor {
+    type NestedFilter = nested_filter::OnlyBodies;
+
+    fn nested_visit_map(&mut self) -> Self::NestedFilter {
+        nested_filter::OnlyBodies
+    }
+
+    fn visit_expr(&mut self, expr: &'tcx Expr<'tcx>) {
+        if expr.hir_id == self.hir_id {
+            self.found = true;
+            return;
+        }
+
+        // Visit nested expressions in control flow structures
+        match expr.kind {
+            ExprKind::Block(block, _) => {
+                for stmt in block.stmts {
+                    self.visit_stmt(stmt);
+                }
+                if let Some(expr) = block.expr {
+                    self.visit_expr(expr);
+                }
+            }
+            ExprKind::If(cond, then, else_opt) => {
+                self.visit_expr(cond);
+                self.visit_expr(then);
+                if let Some(else_expr) = else_opt {
+                    self.visit_expr(else_expr);
+                }
+            }
+            ExprKind::Match(scrutinee, arms, _) => {
+                self.visit_expr(scrutinee);
+                for arm in arms {
+                    if let Some(guard) = arm.guard {
+                        self.visit_expr(guard);
+                    }
+                    self.visit_expr(arm.body);
+                }
+            }
+            ExprKind::Loop(block, _, _, _) => {
+                self.visit_block(block);
+            }
+            _ => {
+                intravisit::walk_expr(self, expr);
+            }
+        }
+    }
+}
+
+/// Checks if the given HirId is used later in the code after the specified span
+fn is_used_later<'tcx>(cx: &LateContext<'tcx>, hir_id: HirId, call_span: rustc_span::Span) -> bool {
+    let body_id = cx.tcx.hir().enclosing_body_owner(hir_id);
+    let body = cx.tcx.hir().body(body_id).unwrap();
+    
+    // Check all statements in the body
+    for stmt in body.value.stmts.iter() {
+        if stmt.span > call_span {
+            let mut visitor = UsageVisitor {
+                hir_id,
+                found: false,
+            };
+            visitor.visit_stmt(stmt);
+            if visitor.found {
+                return true;
+            }
+        }
+    }
+    
+    // Also check the body's return expression if it exists
+    if let Some(expr) = body.value.expr {
+        if expr.span > call_span {
+            let mut visitor = UsageVisitor {
+                hir_id,
+                found: false,
+            };
+            visitor.visit_expr(expr);
+            if visitor.found {
+                return true;
+            }
+        }
+    }
+    
+    false
+}
+
 impl<'tcx> LateLintPass<'tcx> for UnnecessaryConversionForTrait {
     #[expect(clippy::too_many_lines)]
     fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'tcx>) {
@@ -185,27 +276,7 @@ impl<'tcx> LateLintPass<'tcx> for UnnecessaryConversionForTrait {
             && let Param(param_ty) = input.kind()
         {
             // Check if the original collection is used later
-            let hir_id = maybe_arg.hir_id;
-            let mut is_used_later = false;
-            let body_id = cx.tcx.hir().enclosing_body_owner(hir_id);
-            let body = cx.tcx.hir().body(body_id).unwrap();
-            
-            for stmt in body.value.stmts.iter() {
-                if stmt.span > maybe_call.span {
-                    let mut visitor = UsageVisitor {
-                        hir_id,
-                        found: false,
-                    };
-                    visitor.visit_stmt(stmt);
-                    if visitor.found {
-                        is_used_later = true;
-                        break;
-                    }
-                }
-            }
-
-            if is_used_later {
-                // Skip the lint if the collection is used later
+            if is_used_later(cx, maybe_arg.hir_id, maybe_call.span) {
                 return;
             }
 
@@ -727,25 +798,4 @@ fn coverage_path(krate: &str) -> PathBuf {
         .target_directory
         .join(krate.to_owned() + "_coverage.txt")
         .into_std_path_buf()
-}
-
-struct UsageVisitor {
-    hir_id: HirId,
-    found: bool,
-}
-
-impl<'tcx> Visitor<'tcx> for UsageVisitor {
-    type NestedFilter = nested_filter::OnlyBodies;
-
-    fn nested_visit_map<'this>(&'this mut self) -> Self::NestedFilter {
-        nested_filter::OnlyBodies(())
-    }
-
-    fn visit_expr(&mut self, expr: &'tcx Expr<'tcx>) {
-        if expr.hir_id == self.hir_id {
-            self.found = true;
-            return;
-        }
-        intravisit::walk_expr(self, expr);
-    }
 }
