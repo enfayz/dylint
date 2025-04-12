@@ -35,8 +35,7 @@ pub fn cargo_dylint(workspace_root: impl AsRef<Path>) -> Result<PathBuf> {
     let metadata = MetadataCommand::new()
         .current_dir(workspace_root.as_ref())
         .no_deps()
-        .exec()
-        .unwrap();
+        .exec()?;
     let cargo_dylint = metadata
         .target_directory
         .as_std_path()

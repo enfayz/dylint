@@ -54,20 +54,27 @@ pub(crate) fn is_used_later<'tcx>(
 ) -> bool {
     let body_id = cx.tcx.hir().enclosing_body_owner(hir_id);
     let body = cx.tcx.hir().body(body_id).unwrap();
-    
-    // Check all statements in the body
-    for stmt in body.value.stmts.iter() {
-        if stmt.span > call_span && usage_found_in(hir_id, stmt, |v, s| v.visit_stmt(s)) {
-            return true;
+    let mut visitor = UsageVisitor { hir_id, found: false };
+
+    // Traverse statements after call_span
+    for stmt in &body.value.stmts {
+        if stmt.span > call_span {
+            visitor.visit_stmt(stmt);
+            if visitor.found {
+                return true;
+            }
         }
     }
-    
-    // Also check the body's return expression if it exists
+
+    // Traverse the return expression if available
     if let Some(expr) = body.value.expr {
-        if expr.span > call_span && usage_found_in(hir_id, expr, |v, e| v.visit_expr(e)) {
-            return true;
+        if expr.span > call_span {
+            visitor.visit_expr(expr);
+            if visitor.found {
+                return true;
+            }
         }
     }
-    
+
     false
 } 
